@@ -3,6 +3,8 @@
 import discord
 import os
 import requests
+import sys
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
@@ -27,6 +29,10 @@ bot_activity = discord.Game(name = "Marble Game")
 client = commands.Bot(command_prefix = '$', intents = intents, case_insensitive = True, activity = bot_activity)
 timenow = datetime.now()
 # driver = webdriver.Chrome()
+currentseason = 1
+
+with open("season.txt", "r") as file:
+    currentseason = int(file.read())
 
 @client.event
 async def on_ready():
@@ -100,7 +106,7 @@ async def on_command_error(ctx, error):
 
 
 
-def get_stats(username):
+def get_stats(username, season = currentseason):
 
     obj = {"name": username}
     response = requests.post("https://rivalsmeta.com/api/find-player", json=obj)
@@ -114,128 +120,96 @@ def get_stats(username):
         return "post failed"
 
 
-    response = requests.get("https://rivalsmeta.com/player/" + username)
+    response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     print(response.status_code)
-    # this is the html of the page
-    # the info we want is the player name - which is given in the title section in the format <title>username Profile - Marvel Rivals Tracker</title>
-    # this is always line 3 in the html
-    response_text = response.text
-    response_text = response_text.split("\n")
-    # print(response_text[2])
-    # we want to get the username from the title
-    title = response_text[2]
-    title = title.split(" ")
-    print(title)
-    # remove <title> from the start
-    title[0] = title[0][7:]
-    # remove the last 5 elements of title
-    title = title[:-5]
-    name = " ".join(title)
-
-    # now in line 22 we have a massive string of essentially useless data but the stat we are interested in is there
-    # we want to find the section looking like this 
-    # <div class="rank-info"><div class="name">Grandmaster 3</div><div class="score">4,509 <span>score</span></div></div>
-    # we want to get the rank info name and the score
-    # we can find this by looking for the string "<div class="profile-overview">"
-
-    try:
-        rankline = response_text[21]
-    except:
-        return "rankline not found"
-    # we want to split this line by the "<div class="profile-overview">" string
-    try:
-
-        rankline = rankline.split('<div class="profile-overview"')
-    except:
-        return "profile overview split failed"
-    # now we want to split the first element of this list by the "<div class="rank-info">" string
-    try:
-        rankline = rankline[1].split('<div class="rank-info"')
-    except:
-        with open ("error.txt", "w") as file:
-            for i in range(len(rankline)):
-                file.write("rankline line " + str(i) + " " + rankline[i] + "\n")
-        return "rank info split failed"
+    # with open ("response.txt", "w") as file:
+    #     file.write(response.text)
+    #     print("wrote response to file")
+    response = response.json()
+    stats = response["stats"]
+    rankedwins = stats["ranked_matches_wins"]
+    rankedlosses = stats["ranked_matches"] - rankedwins
+    timeplayed = stats["ranked"]["total_time_played"] # this is in seconds, we want to convert this to hours to 2 decimal places
+    timeplayedhours = int(timeplayed // 3600)
+    timeplayedminutes = int((timeplayed % 3600) // 60)
     
-    # now we want to split the first element of this list by the "<div class="name">" string
+    player = response["player"]["info"]
+    playername = player["name"]
+    teamname = player["club_team_mini_name"]
+    level = player["level"]
+    season += 1
+    rankgame = player["rank_game_100100" + str(season)]
+    # this is the rank game info
+    # {"rank_game":{"max_level":16,"rank_score":4488.9095827628,"update_time":1739052363,"protect_score":0,"diff_score":23.933122850863,"rank_game_id":2,"win_count":105,"level":15,"max_rank_score":4565.2217554892}}
+    # Extracting information from rankgame
+    rankgame = json.loads(rankgame)
+    rank_score = rankgame["rank_game"]["rank_score"]
+    rank_score = round(rank_score, 2)
+    ranklevel = rankgame["rank_game"]["level"]
+    max_rank_score = rankgame["rank_game"]["max_rank_score"]
+    max_rank_score = round(max_rank_score, 2)
+    max_level = rankgame["rank_game"]["max_level"]
+    # print(f"ranked wins: {rankedwins} ranked losses: {rankedlosses} time played: {timeplayed} team name: {teamname} level: {level} rank: {rank_score} rank level: {ranklevel} max rank: {max_rank_score} max rank level: {max_level}")
     
-    rankname = rankline[1].split("<div class=\"name\">")
-    rankname = rankname[1].split("</div>")[0]
-
-    ranknumber = rankline[1].split("<div class=\"score\">")
-    ranknumber = ranknumber[1].split("<span>")[0].replace(",", "").replace(" ", "")
-
-    rankwl = rankline[1].split("<div class=\"w-l\">")
-    rankwl = rankwl[1].split("</div>")[0].replace("<span>", "").replace("</span>", "").replace(" ", "")
-
-    # now we want to clean these up
-    # rankname = rankname[1].split("</div>")[0]
-    # ranknumber = ranknumber[1].split("</div>")[0]
+    return playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes
 
 
-    return name, rankname, ranknumber, rankwl
 
-def get_stats_uid(username):
-    response = requests.get("https://rivalsmeta.com/player/" + username)
+def get_stats_uid(username, season = currentseason):
+    response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     print(response.status_code)
-    # this is the html of the page
-    # the info we want is the player name - which is given in the title section in the format <title>username Profile - Marvel Rivals Tracker</title>
-    # this is always line 3 in the html
-    response_text = response.text
-    response_text = response_text.split("\n")
-    # print(response_text[2])
-    # we want to get the username from the title
-    title = response_text[2]
-    title = title.split(" ")
-    print(title)
-    # remove <title> from the start
-    title[0] = title[0][7:]
-    # remove the last 5 elements of title
-    title = title[:-5]
-    name = " ".join(title)
-
-    # now in line 22 we have a massive string of essentially useless data but the stat we are interested in is there
-    # we want to find the section looking like this 
-    # <div class="rank-info"><div class="name">Grandmaster 3</div><div class="score">4,509 <span>score</span></div></div>
-    # we want to get the rank info name and the score
-    # we can find this by looking for the string "<div class="profile-overview">"
-
-    try:
-        rankline = response_text[21]
-    except:
-        return "rankline not found"
-    # we want to split this line by the "<div class="profile-overview">" string
-    try:
-
-        rankline = rankline.split('<div class="profile-overview"')
-    except:
-        return "profile overview split failed"
-    # now we want to split the first element of this list by the "<div class="rank-info">" string
-    try:
-        rankline = rankline[1].split('<div class="rank-info"')
-    except:
-        with open ("error.txt", "w") as file:
-            for i in range(len(rankline)):
-                file.write("rankline line " + str(i) + " " + rankline[i] + "\n")
-        return "rank info split failed"
+    # with open ("response.txt", "w") as file:
+    #     file.write(response.text)
+    #     print("wrote response to file")
+    response = response.json()
+    stats = response["stats"]
+    rankedwins = stats["ranked_matches_wins"]
+    rankedlosses = stats["ranked_matches"] - rankedwins
+    timeplayed = stats["ranked"]["total_time_played"] # this is in seconds, we want to convert this to hours to 2 decimal places
+    timeplayedhours = int(timeplayed // 3600)
+    timeplayedminutes = int((timeplayed % 3600) // 60)
     
-    # now we want to split the first element of this list by the "<div class="name">" string
+    player = response["player"]["info"]
+    playername = player["name"]
+    teamname = player["club_team_mini_name"]
+    level = player["level"]
+    season += 1
+    rankgame = player["rank_game_100100" + str(season)]
+    # this is the rank game info
+    # {"rank_game":{"max_level":16,"rank_score":4488.9095827628,"update_time":1739052363,"protect_score":0,"diff_score":23.933122850863,"rank_game_id":2,"win_count":105,"level":15,"max_rank_score":4565.2217554892}}
+    # Extracting information from rankgame
+    rankgame = json.loads(rankgame)
+    rank_score = rankgame["rank_game"]["rank_score"]
+    rank_score = round(rank_score, 2)
+    ranklevel = rankgame["rank_game"]["level"]
+    max_rank_score = rankgame["rank_game"]["max_rank_score"]
+    max_rank_score = round(max_rank_score, 2)
+    max_level = rankgame["rank_game"]["max_level"]
+    # print(f"ranked wins: {rankedwins} ranked losses: {rankedlosses} time played: {timeplayed} team name: {teamname} level: {level} rank: {rank_score} rank level: {ranklevel} max rank: {max_rank_score} max rank level: {max_level}")
     
-    rankname = rankline[1].split("<div class=\"name\">")
-    rankname = rankname[1].split("</div>")[0]
-
-    ranknumber = rankline[1].split("<div class=\"score\">")
-    ranknumber = ranknumber[1].split("<span>")[0].replace(",", "").replace(" ", "")
-
-    rankwl = rankline[1].split("<div class=\"w-l\">")
-    rankwl = rankwl[1].split("</div>")[0].replace("<span>", "").replace("</span>", "").replace(" ", "")
-
-    # now we want to clean these up
-    # rankname = rankname[1].split("</div>")[0]
-    # ranknumber = ranknumber[1].split("</div>")[0]
+    return playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes
 
 
-    return name, rankname, ranknumber, rankwl
+def convert_level(level):
+    # bronze 3-1, silver 3-1, gold 3-1, platinum 3-1, diamond 3-1, grandmaster 3-1, celestial 3-1, anything higher is eternity
+    # starts at 1 for bronze 3
+    if level < 4:
+        return "Bronze " + str(4 - level)
+    elif level < 7:
+        return "Silver " + str(7 - level)
+    elif level < 10:
+        return "Gold " + str(10 - level)
+    elif level < 13:
+        return "Platinum " + str(13 - level)
+    elif level < 16:
+        return "Diamond " + str(16 - level)
+    elif level < 19:
+        return "Grandmaster " + str(19 - level)
+    elif level < 22:
+        return "Celestial " + str(22 - level)
+    else:
+        return "Eternity"
+
 
 
 
@@ -251,14 +225,31 @@ async def uidlookup(ctx, username):
     # await ctx.send(response.text)
 
 @client.command(name="stats")
-async def stats(ctx, username):
-    name, rankname, ranknumber, rankwl = get_stats(username)
-    await ctx.send(f"{name} is {rankname} ({ranknumber})\n win/loss: {rankwl}")
+async def stats(ctx, username, season=1):
+    playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes = get_stats(username, season)
+    embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
+    embed.add_field(name="Faction", value=teamname, inline=False)
+    embed.add_field(name="Level", value=level, inline=False)
+    rankname = convert_level(ranklevel)
+    maxrankname = convert_level(max_level)
+    embed.add_field(name="Rank", value=f"{rankname} ({rank_score})\nPeak Rank: {maxrankname} ({max_rank_score})", inline=False)
+    embed.add_field(name="Win/Loss", value=f"{rankedwins}/{rankedlosses} ({round(rankedwins/(rankedwins + rankedlosses) * 100, 2)}%)", inline=False)
+    embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
+    await ctx.send(embed=embed)
+
 
 @client.command(name="statsuid")
-async def statsuid(ctx, username):
-    name, rankname, ranknumber, rankwl = get_stats_uid(username)
-    await ctx.send(f"{name} is {rankname} ({ranknumber})\n win/loss: {rankwl}")
+async def statsuid(ctx, username, season=1):
+    playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes = get_stats(username, season)
+    embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
+    embed.add_field(name="Faction", value=teamname, inline=False)
+    embed.add_field(name="Level", value=level, inline=False)
+    rankname = convert_level(ranklevel)
+    maxrankname = convert_level(max_level)
+    embed.add_field(name="Rank", value=f"{rankname} ({rank_score})\nPeak Rank: {maxrankname} ({max_rank_score})", inline=False)
+    embed.add_field(name="Win/Loss", value=f"{rankedwins}/{rankedlosses} ({round(rankedwins/(rankedwins + rankedlosses) * 100, 2)}%)", inline=False)
+    embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
+    await ctx.send(embed=embed)
 
 @client.command(name="update")
 async def update(ctx, username):
@@ -314,13 +305,16 @@ async def leaderboard(ctx):
         try:
             if uids[i] == "" or uids[i] == " ":
                 continue
-            name, rankname, ranknumber, rankwl = get_stats_uid(uids[i])
-            leaderboard.append((name, rankname, ranknumber, rankwl))
+            playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes = get_stats_uid(uids[i])
+            leaderboard.append((playername, teamname, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses))
         except:
             print(f"failed to get stats for {uids[i]}")
     leaderboard.sort(key=lambda x: int(x[2]), reverse=True)
     for i in range(len(leaderboard)):
-        embed.add_field(name=leaderboard[i][0], value=f"{leaderboard[i][1]} ({leaderboard[i][2]})\n win/loss: {leaderboard[i][3]}", inline=False)
+        if leaderboard[i][1] == "":
+            embed.add_field(name=leaderboard[i][0], value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
+        else:
+            embed.add_field(name=leaderboard[i][0] + " [" + leaderboard[i][1] + "]", value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
     await ctx.send(embed=embed)
 
 @client.command(name="adduid")
@@ -353,6 +347,18 @@ async def listuids(ctx):
     # remove the last 2 characters
     message = message[:-2]
     await ctx.send(message)
+
+@client.command(name="setseason")
+async def setseason(ctx, season):
+    global currentseason
+    currentseason = int(season)
+    with open("season.txt", "w") as file:
+        file.write(season)
+    await ctx.send(f"Season set to {season}")
+
+@client.command(name="getseason")
+async def getseason(ctx):
+    await ctx.send(f"Current season is {currentseason}")
 
         
 
