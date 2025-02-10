@@ -610,6 +610,36 @@ async def getseason(ctx):
     """Returns the current season as shown in game"""
     await ctx.send(f"Current season is {currentseason}")
 
+@client.command(name="reportbug")
+async def reportbug(ctx, *bug):
+    """Reports a bug to the developer"""
+    bug = " ".join(bug)
+    author = ctx.author
+    liadisc = client.get_user(278288658673434624)
+    await liadisc.send(f"Bug report from {author}: {bug}")
+
+@client.command(name="suggest")
+async def suggest(ctx, *suggestion):
+    """Suggests a feature to the developer"""
+    suggestion = " ".join(suggestion)
+    author = ctx.author
+    liadisc = client.get_user(278288658673434624)
+    await liadisc.send(f"Suggestion from {author}: {suggestion}")
+
+@client.command(name="announce")
+async def announce(ctx, *announcement):
+    """Announces something to all servers with an active leaderboard"""
+    announcement = " ".join(announcement)
+    for guildid in server_uids:
+        guild = client.get_guild(guildid)
+        for i in range(len(server_uids[guildid])):
+            uid = server_uids[guildid][i]
+            try:
+                await guild.get_channel(int(uid_channels[uid])).send(announcement)
+            except:
+                print(f"failed to send announcement to {uid}")
+    await ctx.send("Announcement sent to all servers")
+
 
 @tasks.loop(seconds=3600)
 async def update_stats():
