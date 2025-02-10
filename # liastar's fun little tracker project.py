@@ -617,6 +617,7 @@ async def reportbug(ctx, *bug):
     author = ctx.author
     liadisc = client.get_user(278288658673434624)
     await liadisc.send(f"Bug report from {author}: {bug}")
+    await ctx.send("Bug report sent")
 
 @client.command(name="suggest")
 async def suggest(ctx, *suggestion):
@@ -625,10 +626,15 @@ async def suggest(ctx, *suggestion):
     author = ctx.author
     liadisc = client.get_user(278288658673434624)
     await liadisc.send(f"Suggestion from {author}: {suggestion}")
+    await ctx.send("Suggestion sent")
 
 @client.command(name="announce")
 async def announce(ctx, *announcement):
     """Announces something to all servers with an active leaderboard"""
+    # only lia can do this
+    if ctx.author.id != 278288658673434624:
+        await ctx.send("You do not have permission to run this command")
+        return
     announcement = " ".join(announcement)
     for guildid in server_uids:
         guild = client.get_guild(guildid)
