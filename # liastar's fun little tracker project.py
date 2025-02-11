@@ -317,6 +317,10 @@ async def matches(ctx, username, amount=5):
         return
     playername = username
     username = getuidforname(username)
+    for key, value in name_uid_cache.items():
+        if value.lower() == playername.lower():
+            playername = value
+    
     response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(currentseason))
     if response.status_code != 200:
         await ctx.send("Failed to get match history for this player")
