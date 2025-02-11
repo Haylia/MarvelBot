@@ -10,12 +10,8 @@ import pandas as pd
 from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
+PREFIX = os.getenv('DISCORD_PREFIX')
 
-# with open ("uids.txt", "r") as file:
-#     uids = file.readlines()
-#     for i in range(len(uids)):
-#         uids[i] = uids[i].strip()
-#     print(uids)
 
 # gonna do uids with a dictionary instead of a list, as i need the server name to be the key and the uids (as a list) to be the value
 # gonna do this by reading the uids files and getting the server name from the file name
@@ -34,9 +30,12 @@ from discord.utils import get
 
 intents = discord.Intents.all()
 bot_activity = discord.Game(name = "Marble Game")
-client = commands.Bot(command_prefix = '$', intents = intents, case_insensitive = True, activity = bot_activity)
+# Change only the no_category default string
+help_command = commands.DefaultHelpCommand(
+    no_category = 'Commands'
+)
+client = commands.Bot(command_prefix = PREFIX, intents = intents, case_insensitive = True, activity = bot_activity, help_command=help_command)
 timenow = datetime.now()
-# driver = webdriver.Chrome()
 currentseason = 1
 
 with open("season.txt", "r") as file:
@@ -116,6 +115,14 @@ async def on_command_error(ctx, error):
     else:
         await ctx.send("there's an error in this command")
         raise error
+    
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return
+    if message.content.startswith(PREFIX):
+        print(f"Command: {message.content}")
+        await client.process_commands(message)
 
 def getuidforname(username):
     #check the cache for the username, which is the value
@@ -220,23 +227,161 @@ def convert_level(level):
     if level < 1:
         return "Unranked"
     elif level < 4:
-        return "Bronze " + str(4 - level)
+        return "Bronze " + str(4 - int(level))
     elif level < 7:
-        return "Silver " + str(7 - level)
+        return "Silver " + str(7 - int(level))
     elif level < 10:
-        return "Gold " + str(10 - level)
+        return "Gold " + str(10 - int(level))
     elif level < 13:
-        return "Platinum " + str(13 - level)
+        return "Platinum " + str(13 - int(level))
     elif level < 16:
-        return "Diamond " + str(16 - level)
+        return "Diamond " + str(16 - int(level))
     elif level < 19:
-        return "Grandmaster " + str(19 - level)
+        return "Grandmaster " + str(19 - int(level))
     elif level < 22:
-        return "Celestial " + str(22 - level)
+        return "Celestial " + str(22 - int(level))
     else:
         return "Eternity"
+    
+map_dict = {
+    1272: "Birnin T'Challa",
+    1288: "Hell's Heaven",
+    1291: "Midtown",
+    1231: "Yggdrasill Path",
+    1236: "Royal Palace",
+    1245: "Spider-Islands",
+    1240: "Symbiotic Surface",
+    1230: "Shin-Shibuya",
+    1267: "Hall of Djalia",
+    1290: "Symbiotic Surface",
+}
 
+def get_map(mapid):
+    return map_dict.get(int(mapid), "Unknown Map " + str(mapid))
 
+hero_dict = {
+    1011: "Bruce Banner",
+    1014: "The Punisher",
+    1015: "Storm",
+    1016: "Loki",
+    1018: "Doctor Strange",
+    1020: "Mantis",
+    1021: "Hawkeye",
+    1022: "Captain America",
+    1023: "Rocket Raccoon",
+    1024: "Hela",
+    1025: "Cloak and Dagger",
+    1026: "Black Panther",
+    1027: "Groot",
+    1029: "Magik",
+    1030: "Moon Knight",
+    1031: "Luna Snow",
+    1032: "Squirrel Girl",
+    1033: "Black Widow",
+    1034: "Iron Man",
+    1035: "Venom",
+    1036: "Spider-Man",
+    1037: "Magneto",
+    1038: "Scarlet Witch",
+    1039: "Thor",
+    1040: "Mister Fantastic",
+    1041: "Winter Soldier",
+    1042: "Peni Parker",
+    1043: "Star-Lord",
+    1045: "Namor",
+    1046: "Adam Warlock",
+    1047: "Jeff the Land Shark",
+    1048: "Psylocke",
+    1049: "Wolverine",
+    1050: "Invisible Woman",
+    1052: "Iron Fist"
+}
+
+def get_hero_name(heroid):
+    return hero_dict.get(heroid, "Unknown Hero " + str(heroid))
+
+def convert_game_mode(camp):
+    if camp == 1:
+        return "Quick Match"
+    elif camp == 2:
+        return "Ranked"
+    else:
+        return "Other"
+    
+    
+@client.command(name="matches")
+async def matches(ctx, username, amount=5):
+    """Gets match history for a user"""
+    if amount > 10:
+        await ctx.send("You can only display up to 10 matches at a time")
+        return
+    playername = username
+    username = getuidforname(username)
+    response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(currentseason))
+    if response.status_code != 200:
+        await ctx.send("Failed to get match history for this player")
+        return
+    response = response.json()
+    matchhistory = response["match_history"]
+    if len(matchhistory) == 0:
+        await ctx.send("No matches found for this player")
+        return
+    embed = discord.Embed(title=playername + "'s Match History", color=discord.Color.blue())
+    for i in range(amount):
+            match = matchhistory[i]
+            mapname = get_map(match["match_map_id"])
+            matchtimer = int(match["match_play_duration"])
+            matchtimestamp = int(match["match_time_stamp"])
+            mvp = match["mvp_uid"]
+            svp = match["svp_uid"]
+            dynamicfields = match["dynamic_fields"]
+            scoreinfo = dynamicfields["score_info"]
+            if scoreinfo == None:
+                scoreteam0 = "N/A"
+                scoreteam1 = "N/A"
+            else:
+                scoreteam0 = int(scoreinfo["0"])
+                scoreteam1 = int(scoreinfo["1"])
+            gamemode = convert_game_mode(match["game_mode_id"])
+            matchplayerinfo = match["match_player"]
+            assists = matchplayerinfo["a"]
+            deaths = matchplayerinfo["d"]
+            kills = matchplayerinfo["k"]
+            playerwon = matchplayerinfo["is_win"]
+            didleave = matchplayerinfo["has_escaped"]
+            dynamicfields2 = matchplayerinfo["dynamic_fields"]
+            scoreadded = dynamicfields2["add_score"]
+            oldlevel = dynamicfields2["level"]
+            newlevel = dynamicfields2["new_level"]
+            newscore = dynamicfields2["new_score"]
+            playerhero = matchplayerinfo["player_hero"]
+            playerheroid = playerhero["hero_id"]
+            playerheroname = get_hero_name(playerheroid)
+            playerismvp = str(username) == str(mvp)
+            playerissvp = str(username) == str(svp)
+            vpstring = ""
+            winstring = ""
+            leftstring = ""
+            if playerismvp:
+                vpstring += " (MVP)"
+            elif playerissvp:
+                vpstring += " (SVP)"
+            if playerwon == 1:
+                winstring += "Won"
+            else:
+                winstring += "Lost"
+            if didleave:
+                leftstring += " [Left]"
+            matchtimemins = (matchtimer) // 60
+            matchtimesecs = matchtimer % 60
+            scorestr = ""
+            if scoreadded > 0:
+                scorestr = "+"
+            rankstring = ""
+            if gamemode == "Ranked":
+                rankstring = f"\nRank: {convert_level(oldlevel)} -> {convert_level(newlevel)}\nRS: {round(float(newscore), 2)} ({scorestr}{round(float(scoreadded), 2)})"
+            embed.add_field(name=f"{mapname} - {gamemode} (<t:{matchtimestamp}:R>)" + leftstring, value=f"{winstring} as {playerheroname}{vpstring}\n KDA {kills}/{deaths}/{assists} ({round(int(kills + assists)/int(deaths),2)}){rankstring}\nScore: {scoreteam0} - {scoreteam1} in {matchtimemins}m {matchtimesecs}s", inline=False)
+    await ctx.send(embed=embed)
 
 
 @client.command(name="uidlookup")
@@ -536,7 +681,7 @@ async def removeuid(ctx, uid):
 
 @client.command(name="clearalluids")
 async def clearalluids(ctx):
-    """Clears all uids from the server"""
+    """[ADMIN] Clears all uids from the server"""
     # only lia can do this
     if ctx.author.id != 278288658673434624:
         await ctx.send("You do not have permission to run this command")
@@ -549,7 +694,7 @@ async def clearalluids(ctx):
 
 @client.command(name="clearalluidsallservers")
 async def clearalluidsallservers(ctx):
-    """Clears all uids from all servers"""
+    """[ADMIN] Clears all uids from all servers"""
     # only lia can do this
     if ctx.author.id != 278288658673434624:
         await ctx.send("You do not have permission to run this command")
@@ -594,7 +739,7 @@ async def listuidsnames(ctx):
 
 @client.command(name="setseason")
 async def setseason(ctx, season):
-    """Sets the current season"""
+    """[ADMIN] Sets the current season"""
     # only lia can do this
     if ctx.author.id != 278288658673434624:
         await ctx.send("You do not have permission to run this command")
@@ -630,21 +775,31 @@ async def suggest(ctx, *suggestion):
 
 @client.command(name="announce")
 async def announce(ctx, *announcement):
-    """Announces something to all servers with an active leaderboard"""
+    """[ADMIN] Announces something to all servers with an active leaderboard"""
     # only lia can do this
     if ctx.author.id != 278288658673434624:
         await ctx.send("You do not have permission to run this command")
         return
     announcement = " ".join(announcement)
-    for guildid in server_uids:
-        guild = client.get_guild(guildid)
-        for i in range(len(server_uids[guildid])):
-            uid = server_uids[guildid][i]
-            try:
-                await guild.get_channel(int(uid_channels[uid])).send(announcement)
-            except:
-                print(f"failed to send announcement to {uid}")
+    # Get all the unique channels in uid_channels
+    uniquechannels = list(set(uid_channels.values()))
+
+    # for each guild, check if the channel is in the uniquechannels list
+    # if it is, send the announcement to that channel
+    for guild in client.guilds:
+        if guild.id in server_uids:
+            for channel in guild.text_channels:
+                if channel.id in uniquechannels or str(channel.id) in uniquechannels:
+                    await channel.send(announcement)
     await ctx.send("Announcement sent to all servers")
+
+@client.command(name="about")
+async def about(ctx):
+    """About this project"""
+    embed = discord.Embed(title="Marvel Rivals Bot", color=discord.Color.blue())
+    embed.add_field(name="Developer", value="<@278288658673434624>", inline=False)
+    embed.add_field(name="Description", value="A bot that tracks Marvel Rivals stats", inline=False)
+    await ctx.send(embed=embed)
 
 
 @tasks.loop(seconds=3600)
