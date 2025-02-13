@@ -5,6 +5,7 @@ import os
 import requests
 import sys
 import json
+import traceback
 from datetime import datetime
 import pandas as pd
 from dotenv import load_dotenv
@@ -23,6 +24,14 @@ uid_last_known_peak = {}
 
 #every time a max_level is found, compare it to the last known peak and update if it is higher both in the dict and the text file
 # then if its higher, post a message in the channel the uid was added in
+# current logic problems: 
+# if the uid is not being tracked in the server it breaks everything
+# solution: check if the uid is tracked in the server before trying to update it
+# extra solution: 
+
+# when a new peak is achieved, it only gets posted in the channel that trigged the update
+# solution: check all the other servers uids to post in there too
+# extra solution: turn the peak message into a function that can be called from anywhere
 
 from discord.ext import commands, tasks
 from discord import guild, embeds, Embed, InteractionResponse
@@ -62,6 +71,7 @@ async def on_ready():
                         uid_channels[uid] = channelid
                         uid_last_known_peak[uid] = int(lastrank)
                         uid_update_time[uid] = pd.to_datetime(int(updatetime), unit='s')
+                        print(f"added uid {uid} to {guilds.name} with last known peak {lastrank} and update time {uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S')}")
 
         except FileNotFoundError:
             print("file not found for " + guilds.name)
@@ -107,7 +117,10 @@ async def on_command_error(ctx, error):
         print(error)
     elif isinstance(error, commands.CommandInvokeError):
         await ctx.send("Command failed to run")
+        #print out the line number that the error happened on
+        # error with traceback is error.with_traceback
         print(error)
+        traceback.print_exception(type(error), error, error.__traceback__)
     elif isinstance(error, commands.CommandNotFound):
         return
     elif isinstance(error, commands.MissingRole):
@@ -164,7 +177,6 @@ def get_stats(username, season = currentseason):
     playername = player["name"]
     teamname = player["club_team_mini_name"]
     level = player["level"]
-    season += 1
     try:
         rankgame = player["rank_game_100100" + str(season)]
         rankgame = json.loads(rankgame)
@@ -202,7 +214,6 @@ def get_stats_uid(username, season = currentseason):
     playername = player["name"]
     teamname = player["club_team_mini_name"]
     level = player["level"]
-    season += 1
     try:
         rankgame = player["rank_game_100100" + str(season)]
         rankgame = json.loads(rankgame)
@@ -308,6 +319,35 @@ def convert_game_mode(camp):
     else:
         return "Other"
     
+def peak_embed_creator(uid, playername, max_level, max_rank_score):
+    embeds_to_send = []
+    returnchannels = []
+    peaked = False
+    if uid in uid_last_known_peak:
+        if max_level > uid_last_known_peak[uid]:
+            # we are going to be changing this function to return a list of embeds to send to all the guilds the user is tracked in
+            # so we will find the guilds, and then the associated channels. update the peak in the dict and the file
+            # and then add the embed to the list of embeds to return
+            peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+            uid_last_known_peak[uid] = max_level
+            for guilds in client.guilds:
+                guildid = guilds.id
+                if uid in server_uids[guildid]:
+                    channelid = uid_channels[uid]
+                    with open ("uids" + str(guildid) + ".txt", "w") as file:
+                        for i in range(len(server_uids[guildid])):
+                            if server_uids[guildid][i] == uid:
+                                file.write(f"\n{uid},{str(channelid)},{max_level},{int(datetime.now().timestamp())}")
+                            else:
+                                file.write(f"\n{server_uids[guildid][i]},{uid_channels[server_uids[guildid][i]]},{uid_last_known_peak[server_uids[guildid][i]]},{int(uid_update_time[server_uids[guildid][i]].timestamp())}")
+                    peaked = True
+                    peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+                    embeds_to_send.append(peakembed)
+                    returnchannels.append(channelid)
+        return embeds_to_send, peaked, returnchannels
+    else:
+        return None, False, None
+    
     
 @client.command(name="matches")
 async def matches(ctx, username, amount=5):
@@ -394,26 +434,26 @@ async def uidlookup(ctx, username):
     await ctx.send(getuidforname(username))
 
 @client.command(name="stats")
-async def stats(ctx, username, season=1):
+async def stats(ctx, username, season=currentseason):
     """Gets the stats for a user based on their username"""
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats(username, season)
     if playername == "error" and teamname == "error" and level == "error":
         await ctx.send("Failed to get stats for this player")
         return
     # max level spotted!
-    peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-    peaked = False
-    if max_level > uid_last_known_peak[uid]:
-        uid_last_known_peak[uid] = max_level
-        with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-            for i in range(len(server_uids[ctx.guild.id])):
-                if server_uids[ctx.guild.id][i] == uid:
-                    file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-                else:
-                    file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        peaked = True
-        peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-    
+    # peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+    # peaked = False
+    # if max_level > uid_last_known_peak[uid]:
+    #     uid_last_known_peak[uid] = max_level
+    #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
+    #         for i in range(len(server_uids[ctx.guild.id])):
+    #             if server_uids[ctx.guild.id][i] == uid:
+    #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
+    #             else:
+    #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
+    #     peaked = True
+    #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+    peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
     embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
     embed.add_field(name="Faction", value=teamname, inline=False)
     embed.add_field(name="Level", value=level, inline=False)
@@ -427,28 +467,31 @@ async def stats(ctx, username, season=1):
     embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
     await ctx.send(embed=embed)
     if peaked:
-        await ctx.send(embed=peakembed)
+        for i in range(len(peakchannels)):
+            channel = client.get_channel(int(peakchannels[i]))
+            await channel.send(embed=peakembeds[i])
 
 
 @client.command(name="statsuid")
-async def statsuid(ctx, username, season=1):
+async def statsuid(ctx, username, season=currentseason):
     """Gets the stats for a user based on their uid"""
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(username, season)
     if playername == "error" and teamname == "error" and level == "error":
         await ctx.send("No stats found for this player")
         return
-    peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-    peaked = False
-    if max_level > uid_last_known_peak[uid]:
-        uid_last_known_peak[uid] = max_level
-        with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-            for i in range(len(server_uids[ctx.guild.id])):
-                if server_uids[ctx.guild.id][i] == uid:
-                    file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-                else:
-                    file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        peaked = True
-        peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+    # peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+    # peaked = False
+    # if max_level > uid_last_known_peak[uid]:
+    #     uid_last_known_peak[uid] = max_level
+    #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
+    #         for i in range(len(server_uids[ctx.guild.id])):
+    #             if server_uids[ctx.guild.id][i] == uid:
+    #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
+    #             else:
+    #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
+    #     peaked = True
+    #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+    peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
     embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
     embed.add_field(name="Faction", value=teamname, inline=False)
     embed.add_field(name="Level", value=level, inline=False)
@@ -462,7 +505,10 @@ async def statsuid(ctx, username, season=1):
     embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
     await ctx.send(embed=embed)
     if peaked:
-        await ctx.send(embed=peakembed)
+        # return the peakembed to the corresponding peakchannel
+        for i in range(len(peakchannels)):
+            channel = client.get_channel(int(peakchannels[i]))
+            await channel.send(embed=peakembeds[i])
     
 
 @client.command(name="update")
@@ -472,34 +518,37 @@ async def update(ctx, username):
 
     text, code = buttonclicker(uid)
     if code == 204:
-        await ctx.send(f"update for {uid} ({username}) already done in the last 30 minutes")
+        await ctx.send(f"update for {uid} ({username}) already done in the last 30 minutes. Last updated at {uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S')}")
     elif code != 200:
         await ctx.send(f"update for {uid} ({username}) failed with code {code}")
     else:
         await ctx.send(f"update for {uid} ({username}) successful")
+        jsonresponse = json.loads(text)
+        if "max_level" in jsonresponse:
+            max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
+            max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
+            playername = jsonresponse["info"]["name"]
+        else:
+            max_level = 0
+            playername = "error"
+            await ctx.send("Failed to get peak rank for this player")
 
-    jsonresponse = json.loads(text)
-    print(jsonresponse)
-    if "max_level" in jsonresponse:
-        max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason + 1)]["max_level"]
-        max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason + 1)]["max_rank_score"]
-        playername = jsonresponse["info"]["name"]
-    else:
-        max_level = 0
-        playername = "error"
-        await ctx.send("Failed to get peak rank for this player")
-
-    if max_level > uid_last_known_peak[uid]:
-        uid_last_known_peak[uid] = max_level
-        with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-            for i in range(len(server_uids[ctx.guild.id])):
-                if server_uids[ctx.guild.id][i] == uid:
-                    file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-                else:
-                    file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-        peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-        await ctx.send(embed=peakembed)
+        # if max_level > uid_last_known_peak[uid]:
+        #     uid_last_known_peak[uid] = max_level
+        #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
+        #         for i in range(len(server_uids[ctx.guild.id])):
+        #             if server_uids[ctx.guild.id][i] == uid:
+        #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
+        #             else:
+        #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
+        #     peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+        #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+        #     await ctx.send(embed=peakembed)
+        peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
+        if peaked:
+            for i in range(len(peakchannels)):
+                channel = client.get_channel(int(peakchannels[i]))
+                await channel.send(embed=peakembeds[i])
 
    
     
@@ -517,27 +566,32 @@ async def updateuid(ctx, uid):
 
     # use the response text to get the max level and player name for the next part
     #the buttonclicker text is response.text
-    jsonresponse = json.loads(text)
-    if "max_level" in jsonresponse:
-        max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason + 1)]["max_level"]
-        max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason + 1)]["max_rank_score"]
-        playername = jsonresponse["info"]["name"]
-    else:
-        max_level = 0
-        playername = "error"
-        await ctx.send("Failed to get peak rank for this player")
-
-    if max_level > uid_last_known_peak[uid]:
-        uid_last_known_peak[uid] = max_level
-        with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-            for i in range(len(server_uids[ctx.guild.id])):
-                if server_uids[ctx.guild.id][i] == uid:
-                    file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-                else:
-                    file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-        peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-        await ctx.send(embed=peakembed)
+        jsonresponse = json.loads(text)
+        if "max_level" in jsonresponse:
+            max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
+            max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
+            playername = jsonresponse["info"]["name"]
+        else:
+            max_level = 0
+            playername = "error"
+            await ctx.send("Failed to get peak rank for this player")
+    
+        # if max_level > uid_last_known_peak[uid]:
+        #     uid_last_known_peak[uid] = max_level
+        #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
+        #         for i in range(len(server_uids[ctx.guild.id])):
+        #             if server_uids[ctx.guild.id][i] == uid:
+        #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
+        #             else:
+        #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
+        #     peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+        #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
+        #     await ctx.send(embed=peakembed)
+        peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
+        if peaked:
+            for i in range(len(peakchannels)):
+                channel = client.get_channel(int(peakchannels[i]))
+                await channel.send(embed=peakembeds[i])
 
     
 @client.command(name="leaderboard")
@@ -565,16 +619,7 @@ async def leaderboard(ctx):
                 continue
             else:
                 leaderboard.append((playername, teamname, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses))
-                if max_level > uid_last_known_peak[uid]:
-                    uid_last_known_peak[uid] = max_level
-                    with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-                        for i in range(len(server_uids[ctx.guild.id])):
-                            if server_uids[ctx.guild.id][i] == uid:
-                                file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-                            else:
-                                file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-                    peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-                    peaked = True
+                peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
         except:
             print(f"failed to get stats for {uids[i]}")
     leaderboard.sort(key=lambda x: int(x[2]), reverse=True)
@@ -587,7 +632,9 @@ async def leaderboard(ctx):
             embed.add_field(name=leaderboard[i][0] + " [" + leaderboard[i][1] + "]", value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
     await ctx.send(embed=embed)
     if peaked:
-        await ctx.send(embed=peakembed)
+        for i in range(len(peakchannels)):
+            channel = client.get_channel(int(peakchannels[i]))
+            await channel.send(embed=peakembeds[i])
     
 
 
@@ -821,17 +868,11 @@ async def update_stats():
                 if playername == "error" and teamname == "error" and level == "error":
                     continue
                 else:
-                    if max_level > uid_last_known_peak[uid]:
-                        uid_last_known_peak[uid] = max_level
-                        with open ("uids" + str(guildid) + ".txt", "w") as file:
-                            for i in range(len(server_uids[guildid])):
-                                if server_uids[guildid][i] == uid:
-                                    file.write(f"\n{uid},{str(uid_channels[uid])},{max_level},{int(datetime.now().timestamp())}")
-                                else:
-                                    file.write(f"\n{server_uids[guildid][i]},{uid_channels[server_uids[guildid][i]]},{uid_last_known_peak[server_uids[guildid][i]]},{int(uid_update_time[server_uids[guildid][i]].timestamp())}")
-                        peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-                        peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-                        await uid_channels[uid].send(embed=peakembed)
+                    peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
+                    if peaked:
+                        for i in range(len(peakchannels)):
+                            channel = client.get_channel(int(peakchannels[i]))
+                            await channel.send(embed=peakembeds[i])
             except:
                 print(f"failed to get stats for {uids[i]}")
     print("stats updated")
