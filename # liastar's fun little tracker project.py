@@ -560,9 +560,11 @@ async def stats(ctx, username="", season=-1):
     """Gets the stats for a user based on their username"""
     global author_names
     if username == "":
+        print("no username provided")
         authorid = ctx.author.id
         if authorid in author_names:
-            uid = author_names[authorid]
+            username = getnameforuid(author_names[authorid])
+            print(f"username is {username}")
         else:
             await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
             return
@@ -927,6 +929,15 @@ async def getseason(ctx):
 
 @client.command(name="reportbug")
 async def reportbug(ctx, *bug):
+    """Reports a bug to the developer"""
+    bug = " ".join(bug)
+    author = ctx.author
+    liadisc = client.get_user(278288658673434624)
+    await liadisc.send(f"Bug report from {author}: {bug}")
+    await ctx.send("Bug report sent")
+
+@client.command(name="bugreport")
+async def bugreport(ctx, *bug):
     """Reports a bug to the developer"""
     bug = " ".join(bug)
     author = ctx.author
