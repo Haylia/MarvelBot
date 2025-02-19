@@ -556,7 +556,7 @@ async def namelookup(ctx, uid):
     
 
 @client.command(name="stats")
-async def stats(ctx, username, season=-1):
+async def stats(ctx, username="", season=-1):
     """Gets the stats for a user based on their username"""
     global author_names
     if username == "":
