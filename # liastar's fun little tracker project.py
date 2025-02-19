@@ -262,7 +262,7 @@ def get_stats(username, season=-1):
     level = player["level"]
     try:
         rankgame = player["rank_game_100100" + str(season)]
-        print(rankgame)
+        #print(rankgame)
         rankgame = json.loads(rankgame)
         rank_score = rankgame["rank_game"]["rank_score"]
         rank_score = round(rank_score, 2)
@@ -560,11 +560,11 @@ async def stats(ctx, username="", season=-1):
     """Gets the stats for a user based on their username"""
     global author_names
     if username == "":
-        print("no username provided")
+        #print("no username provided")
         authorid = ctx.author.id
         if authorid in author_names:
             username = getnameforuid(author_names[authorid])
-            print(f"username is {username}")
+            #print(f"username is {username}")
         else:
             await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
             return
@@ -1003,11 +1003,11 @@ async def set(ctx, username):
         await ctx.send("Failed to find uid for this player")
         return
     author_names[author.id] = uid
-    print(author_names)
+    #print(author_names)
     with open ("authornames.txt", "w") as file:
         for key, value in author_names.items():
             file.write(f"\n{key},{value}")
-            print(f"added {key},{value} to file")
+            #print(f"added {key},{value} to file")
     if oldname == "":
         await ctx.send(f"Default username for {author} set to {username}")
     else:
