@@ -8,10 +8,49 @@ import json
 import traceback
 from datetime import datetime
 import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.firefox.service import Service as FirefoxService
+# from webdriver_manager.firefox import GeckoDriverManager
+# options = webdriver.FirefoxOptions()
+# options.add_argument('-headless')
+# options.add_argument('-no-sandbox')
+# options.add_argument('-disable-gpu')
+# options.add_argument('-disable-exensions')
+# options.add_argument('-dns-prefetch-disable')
+# driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()), options=options)
+
+from selenium.webdriver.chrome.service import Service
+
+
+service = Service(executable_path="./webdriver/chromedriver")
+# service = Service()
+
+options = webdriver.ChromeOptions()
+options.add_argument('--headless')
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-gpu')
+options.add_argument('--disable-extensions')
+options.add_argument('--dns-prefetch-disable')
+options.add_argument('--disable-dev-shm-usage')
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option('useAutomationExtension', False)
+
+
+driver = webdriver.Chrome(service=service, options=options)
+driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.53 Safari/537.36'})
+print(driver.execute_script("return navigator.userAgent;"))
+driver.maximize_window()
+
 from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 PREFIX = os.getenv('DISCORD_PREFIX')
+
+
 
 
 # gonna do uids with a dictionary instead of a list, as i need the server name to be the key and the uids (as a list) to be the value
@@ -21,6 +60,7 @@ uid_channels = {} # to track what channel the uid was added in to post updates
 name_uid_cache = {}
 uid_update_time = {}
 uid_last_known_peak = {}
+author_names = {}
 
 #every time a max_level is found, compare it to the last known peak and update if it is higher both in the dict and the text file
 # then if its higher, post a message in the channel the uid was added in
@@ -47,12 +87,20 @@ client = commands.Bot(command_prefix = PREFIX, intents = intents, case_insensiti
 timenow = datetime.now()
 currentseason = 1
 
-with open("season.txt", "r") as file:
-    currentseason = int(file.read())
 
 @client.event
 async def on_ready():
     print(f'{client.user} has connected to Discord!')
+    # this file may not exist:
+    try:
+        with open("season.txt", "r") as file:
+            global currentseason
+            currentseason = int(file.read())
+
+    except FileNotFoundError:
+        print("season file not found, creating it")
+        with open("season.txt", "w") as file:
+            file.write(currentseason)
     for guilds in client.guilds:
         print(f'Connected to {guilds.name} - {guilds.id}')
         # read from the guilds file and get the uids it contains for each guild, if it exists
@@ -90,9 +138,26 @@ async def on_ready():
                 name_uid_cache[uid] = name
                 # print(f"added uid {uid} ({name}) to cache")
         print("name uid cache loaded")
-            
-            
-    update_stats.start()
+    try:
+        with open("authornames.txt", "r") as file:
+            filelines = file.readlines()
+            for line in filelines:
+                if line == "\n":
+                    continue
+                else:
+                    line = line.strip()
+                    authorid, uid = line.split(",")
+                    authorid = int(authorid)
+                    author_names[authorid] = uid
+                    print(f"added author {authorid} to uid {uid}")
+            print("author names loaded")
+    except FileNotFoundError:
+        print("author names file not found")
+        with open("authornames.txt", "w") as file:
+            file.write("")
+        print("author names file created")
+
+    #update_stats.start()
 
 @client.event
 async def on_guild_join(guild):
@@ -139,6 +204,7 @@ async def on_message(message):
 
 def getuidforname(username):
     #check the cache for the username, which is the value
+    global name_uid_cache
     for key, value in name_uid_cache.items():
         if value.lower() == username.lower():
             return key
@@ -157,14 +223,31 @@ def getuidforname(username):
         return "uid finding failed"
     else:
         return "uid finding failed"
+    
+def getnameforuid(uid):
+    global name_uid_cache
+    if uid in name_uid_cache:
+        return name_uid_cache[uid]
+    else:
+        playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
+        if playername == "error" and teamname == "error" and level == "error":
+            return "Failed to find this player"
+        name_uid_cache[uid] = playername
+        with open("nameuidcache.txt", "a") as file:
+            file.write(f"\n{uid},{playername}")
+        print(f"added uid {uid} ({playername}) to cache")
+        return playername
 
 
-def get_stats(username, season = currentseason):
+def get_stats(username, season=-1):
+    if season == -1:
+        season = get_current_season()
     username = getuidforname(username)
+    print(f"getting stats for {username} in season {season}")
     text, code = buttonclicker(username)
     response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     if response.status_code != 200:
-        return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
+        return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
     response = response.json()
     stats = response["stats"]
     rankedwins = stats["ranked_matches_wins"]
@@ -179,6 +262,7 @@ def get_stats(username, season = currentseason):
     level = player["level"]
     try:
         rankgame = player["rank_game_100100" + str(season)]
+        print(rankgame)
         rankgame = json.loads(rankgame)
         rank_score = rankgame["rank_game"]["rank_score"]
         rank_score = round(rank_score, 2)
@@ -186,8 +270,10 @@ def get_stats(username, season = currentseason):
         max_rank_score = rankgame["rank_game"]["max_rank_score"]
         max_rank_score = round(max_rank_score, 2)
         max_level = rankgame["rank_game"]["max_level"]
-    except:
+    except Exception as e:
         # this player has no ranked data for this season
+        print(e)
+        print(f"no ranked data for {playername} in season {season}")
         rank_score = 0
         ranklevel = 0
         max_rank_score = 0
@@ -197,11 +283,13 @@ def get_stats(username, season = currentseason):
 
 
 
-def get_stats_uid(username, season = currentseason):
+def get_stats_uid(username, season=-1):
+    if season == -1:
+        season = get_current_season()
     text, code = buttonclicker(username)
     response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     if response.status_code != 200:
-        return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
+        return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
     response = response.json()
     stats = response["stats"]
     rankedwins = stats["ranked_matches_wins"]
@@ -223,8 +311,9 @@ def get_stats_uid(username, season = currentseason):
         max_rank_score = rankgame["rank_game"]["max_rank_score"]
         max_rank_score = round(max_rank_score, 2)
         max_level = rankgame["rank_game"]["max_level"]
-    except:
+    except Exception as e:
         # this player has no ranked data for this season
+        print(e)
         rank_score = 0
         ranklevel = 0
         max_rank_score = 0
@@ -330,10 +419,12 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
             # and then add the embed to the list of embeds to return
             peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
             uid_last_known_peak[uid] = max_level
+            print(f"uid {uid} has reached a new peak rank of {convert_level(max_level)}")
             for guilds in client.guilds:
                 guildid = guilds.id
-                if uid in server_uids[guildid]:
-                    channelid = uid_channels[uid]
+                channelid = uid_channels[uid]
+                if uid in server_uids[guildid] and channelid not in returnchannels:
+                    peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
                     with open ("uids" + str(guildid) + ".txt", "w") as file:
                         for i in range(len(server_uids[guildid])):
                             if server_uids[guildid][i] == uid:
@@ -348,20 +439,34 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
     else:
         return None, False, None
     
+def get_author_names():
+    global author_names
+    return author_names
     
 @client.command(name="matches")
-async def matches(ctx, username, amount=5):
+async def matches(ctx, username="", amount=5):
     """Gets match history for a user"""
     if amount > 10:
         await ctx.send("You can only display up to 10 matches at a time")
         return
+    global author_names
+    authorused = False
+    if username == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            username = author_names[authorid]
+            authorused = True
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
     playername = username
-    username = getuidforname(username)
+    if not authorused:
+        username = getuidforname(username)
     for key, value in name_uid_cache.items():
         if value.lower() == playername.lower():
             playername = value
     
-    response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(currentseason))
+    response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(get_current_season))
     if response.status_code != 200:
         await ctx.send("Failed to get match history for this player")
         return
@@ -425,34 +530,48 @@ async def matches(ctx, username, amount=5):
             if gamemode == "Ranked":
                 rankstring = f"\nRank: {convert_level(oldlevel)} -> {convert_level(newlevel)}\nRS: {round(float(newscore), 2)} ({scorestr}{round(float(scoreadded), 2)})"
             embed.add_field(name=f"{mapname} - {gamemode} (<t:{matchtimestamp}:R>)" + leftstring, value=f"{winstring} as {playerheroname}{vpstring}\n KDA {kills}/{deaths}/{assists} ({round(int(kills + assists)/int(deaths),2)}){rankstring}\nScore: {scoreteam0} - {scoreteam1} in {matchtimemins}m {matchtimesecs}s", inline=False)
+    embed.set_footer(text="Last updated: " + uid_update_time[username].strftime('%Y-%m-%d %H:%M:%S'))
     await ctx.send(embed=embed)
 
 
 @client.command(name="uidlookup")
-async def uidlookup(ctx, username):
+async def uidlookup(ctx, username=""):
     """Gets the uid for a user based on their username"""
+    global author_names
+    if username == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            username = author_names[authorid]
+            await ctx.send(username)
+            return
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
     await ctx.send(getuidforname(username))
 
+@client.command(name="namelookup")
+async def namelookup(ctx, uid):
+    """Gets the name for a user based on their uid"""
+    await ctx.send(getnameforuid(uid))
+    
+
 @client.command(name="stats")
-async def stats(ctx, username, season=currentseason):
+async def stats(ctx, username, season=-1):
     """Gets the stats for a user based on their username"""
+    global author_names
+    if username == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            uid = author_names[authorid]
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
+    if season == -1:
+        season = get_current_season()
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats(username, season)
     if playername == "error" and teamname == "error" and level == "error":
         await ctx.send("Failed to get stats for this player")
         return
-    # max level spotted!
-    # peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-    # peaked = False
-    # if max_level > uid_last_known_peak[uid]:
-    #     uid_last_known_peak[uid] = max_level
-    #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-    #         for i in range(len(server_uids[ctx.guild.id])):
-    #             if server_uids[ctx.guild.id][i] == uid:
-    #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-    #             else:
-    #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-    #     peaked = True
-    #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
     peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
     embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
     embed.add_field(name="Faction", value=teamname, inline=False)
@@ -465,6 +584,7 @@ async def stats(ctx, username, season=currentseason):
     else:
         embed.add_field(name="Win/Loss", value=f"{rankedwins}/{rankedlosses} ({round(rankedwins/(rankedwins + rankedlosses) * 100, 2)}%)", inline=False)
     embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
+    embed.set_footer(text="Last updated: " + uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S'))
     await ctx.send(embed=embed)
     if peaked:
         for i in range(len(peakchannels)):
@@ -473,24 +593,22 @@ async def stats(ctx, username, season=currentseason):
 
 
 @client.command(name="statsuid")
-async def statsuid(ctx, username, season=currentseason):
+async def statsuid(ctx, username="", season=-1):
     """Gets the stats for a user based on their uid"""
+    global author_names
+    if username == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            username = author_names[authorid]
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
+    if season == -1:
+        season = get_current_season()
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(username, season)
     if playername == "error" and teamname == "error" and level == "error":
         await ctx.send("No stats found for this player")
         return
-    # peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-    # peaked = False
-    # if max_level > uid_last_known_peak[uid]:
-    #     uid_last_known_peak[uid] = max_level
-    #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-    #         for i in range(len(server_uids[ctx.guild.id])):
-    #             if server_uids[ctx.guild.id][i] == uid:
-    #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-    #             else:
-    #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-    #     peaked = True
-    #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
     peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
     embed = discord.Embed(title=playername + "'s Marvel Rivals Stats", color=discord.Color.blue())
     embed.add_field(name="Faction", value=teamname, inline=False)
@@ -503,6 +621,7 @@ async def statsuid(ctx, username, season=currentseason):
     else:
         embed.add_field(name="Win/Loss", value=f"{rankedwins}/{rankedlosses} ({round(rankedwins/(rankedwins + rankedlosses) * 100, 2)}%)", inline=False)
     embed.add_field(name="Time Played", value=f"{timeplayedhours}h {timeplayedminutes}m", inline=False)
+    embed.set_footer(text="Last updated: " + uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S'))
     await ctx.send(embed=embed)
     if peaked:
         # return the peakembed to the corresponding peakchannel
@@ -512,10 +631,19 @@ async def statsuid(ctx, username, season=currentseason):
     
 
 @client.command(name="update")
-async def update(ctx, username):
+async def update(ctx, username=""):
     """Asks the API to update the stats for a user based on their username"""
-    uid = getuidforname(username)
-
+    # if the username is not provided, get the author's uid from the author names dict
+    global author_names
+    if username == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            uid = author_names[authorid]
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
+    else:
+        uid = getuidforname(username)
     text, code = buttonclicker(uid)
     if code == 204:
         await ctx.send(f"update for {uid} ({username}) already done in the last 30 minutes. Last updated at {uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S')}")
@@ -523,39 +651,36 @@ async def update(ctx, username):
         await ctx.send(f"update for {uid} ({username}) failed with code {code}")
     else:
         await ctx.send(f"update for {uid} ({username}) successful")
-        jsonresponse = json.loads(text)
-        if "max_level" in jsonresponse:
-            max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
-            max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
-            playername = jsonresponse["info"]["name"]
-        else:
-            max_level = 0
-            playername = "error"
-            await ctx.send("Failed to get peak rank for this player")
-
-        # if max_level > uid_last_known_peak[uid]:
-        #     uid_last_known_peak[uid] = max_level
-        #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-        #         for i in range(len(server_uids[ctx.guild.id])):
-        #             if server_uids[ctx.guild.id][i] == uid:
-        #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-        #             else:
-        #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        #     peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-        #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-        #     await ctx.send(embed=peakembed)
-        peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
-        if peaked:
-            for i in range(len(peakchannels)):
-                channel = client.get_channel(int(peakchannels[i]))
-                await channel.send(embed=peakembeds[i])
+        # jsonresponse = json.loads(text)
+        # if "max_level" in jsonresponse:
+        #     max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
+        #     max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
+        #     playername = jsonresponse["info"]["name"]
+        # else:
+        #     max_level = 0
+        #     playername = "error"
+        #     await ctx.send("Failed to get peak rank for this player")
+# 
+        # peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
+        # if peaked:
+        #     for i in range(len(peakchannels)):
+        #         channel = client.get_channel(int(peakchannels[i]))
+        #         await channel.send(embed=peakembeds[i])
 
    
     
 
 @client.command(name="updateuid")
-async def updateuid(ctx, uid):
+async def updateuid(ctx, uid=""):
     """Asks the API to update the stats for a user based on their uid"""
+    global author_names
+    if uid == "":
+        authorid = ctx.author.id
+        if authorid in author_names:
+            uid = author_names[authorid]
+        else:
+            await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
+            return
     text, code = buttonclicker(uid)
     if code == 204:
         await ctx.send(f"update for {uid} already done in the last 30 minutes")
@@ -566,32 +691,21 @@ async def updateuid(ctx, uid):
 
     # use the response text to get the max level and player name for the next part
     #the buttonclicker text is response.text
-        jsonresponse = json.loads(text)
-        if "max_level" in jsonresponse:
-            max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
-            max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
-            playername = jsonresponse["info"]["name"]
-        else:
-            max_level = 0
-            playername = "error"
-            await ctx.send("Failed to get peak rank for this player")
-    
-        # if max_level > uid_last_known_peak[uid]:
-        #     uid_last_known_peak[uid] = max_level
-        #     with open ("uids" + str(ctx.guild.id) + ".txt", "w") as file:
-        #         for i in range(len(server_uids[ctx.guild.id])):
-        #             if server_uids[ctx.guild.id][i] == uid:
-        #                 file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-        #             else:
-        #                 file.write(f"\n{server_uids[ctx.guild.id][i]},{uid_channels[server_uids[ctx.guild.id][i]]},{uid_last_known_peak[server_uids[ctx.guild.id][i]]},{int(uid_update_time[server_uids[ctx.guild.id][i]].timestamp())}")
-        #     peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
-        #     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
-        #     await ctx.send(embed=peakembed)
-        peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
-        if peaked:
-            for i in range(len(peakchannels)):
-                channel = client.get_channel(int(peakchannels[i]))
-                await channel.send(embed=peakembeds[i])
+    #     jsonresponse = json.loads(text)
+    #     if "max_level" in jsonresponse:
+    #         max_level = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_level"]
+    #         max_rank_score = jsonresponse["info"]["rank_game_100100" + str(currentseason)]["max_rank_score"]
+    #         playername = jsonresponse["info"]["name"]
+    #     else:
+    #         max_level = 0
+    #         playername = "error"
+    #         await ctx.send("Failed to get peak rank for this player")
+    # 
+    #     peakembeds, peaked, peakchannels = peak_embed_creator(uid, playername, max_level, max_rank_score)
+    #     if peaked:
+    #         for i in range(len(peakchannels)):
+    #             channel = client.get_channel(int(peakchannels[i]))
+    #             await channel.send(embed=peakembeds[i])
 
     
 @client.command(name="leaderboard")
@@ -602,7 +716,6 @@ async def leaderboard(ctx):
     # then sort the list by the score
     # then print the list in a discord embed
     embed = discord.Embed(title="Marvel Rivals Leaderboard", color=discord.Color.blue())
-    peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
     peaked = False
     leaderboard = []
     guildid = ctx.guild.id
@@ -613,7 +726,8 @@ async def leaderboard(ctx):
     for i in range(len(uids)):
         try:
             if uids[i] == "" or uids[i] == " ":
-                continue
+                await ctx.send("There are no uids being tracked in this server")
+                return
             playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uids[i])
             if playername == "error" and teamname == "error" and level == "error":
                 continue
@@ -801,10 +915,15 @@ async def setseason(ctx, season):
         file.write(season)
     await ctx.send(f"Season set to {season}")
 
+
+def get_current_season():
+    global currentseason
+    return currentseason
+
 @client.command(name="getseason")
 async def getseason(ctx):
     """Returns the current season as shown in game"""
-    await ctx.send(f"Current season is {currentseason}")
+    await ctx.send(f"Current season is {get_current_season()}")
 
 @client.command(name="reportbug")
 async def reportbug(ctx, *bug):
@@ -850,7 +969,49 @@ async def about(ctx):
     embed = discord.Embed(title="Marvel Rivals Bot", color=discord.Color.blue())
     embed.add_field(name="Developer", value="<@278288658673434624>", inline=False)
     embed.add_field(name="Description", value="A bot that tracks Marvel Rivals stats", inline=False)
+    if PREFIX == "#":
+        embed.add_field(name="wONSTIN", value="I was created as a test bench bot for Winston, Lia's DKP bot for Paranoid and then for Relentless. Now I just test everything Lia is working on, so my functionality is always changing.", inline=False)
+    else:
+        embed.add_field(name="Marvel Rarvels", value="This bot is still in development. Please use the " + PREFIX + "reportbug and the " + PREFIX + "suggest commands to help improve the bot", inline=False)
     await ctx.send(embed=embed)
+
+
+@client.command(name="set")
+async def set(ctx, username):
+    """Sets the default username for this user"""
+    author_names = get_author_names()
+    author = ctx.author
+    uid = getuidforname(username)
+    oldname = ""
+    if author.id in author_names:
+        oldname = getnameforuid(author_names[author.id])
+    if oldname.lower() == username.lower():
+        await ctx.send(f"{username} is already the default username for {author}")
+        return
+    if uid == "uid finding failed":
+        await ctx.send("Failed to find uid for this player")
+        return
+    author_names[author.id] = uid
+    print(author_names)
+    with open ("authornames.txt", "w") as file:
+        for key, value in author_names.items():
+            file.write(f"\n{key},{value}")
+            print(f"added {key},{value} to file")
+    if oldname == "":
+        await ctx.send(f"Default username for {author} set to {username}")
+    else:
+        await ctx.send(f"Default username for {author} changed from {oldname} to {username}")
+
+@client.command(name="me")
+async def me(ctx):
+    """Gets the default username for this user"""
+    author_names = get_author_names()
+    author = ctx.author
+    if author.id in author_names:
+        await ctx.send(getnameforuid(author_names[author.id]))
+    else:
+        await ctx.send("You have not set a default username")
+        
 
 
 @tasks.loop(seconds=3600)
@@ -884,14 +1045,53 @@ def buttonclicker(uid):
     try: 
         if uid == "" or uid == " ":
             return "uid is empty", 404
-
         timenow = datetime.now()
         if uid in uid_update_time:
             if (timenow - uid_update_time[uid]).seconds < 1800:
                 return "update already done in last 30 minutes", 204
-        uid_update_time[uid] = timenow
-        response = requests.get("https://rivalsmeta.com/api/update-player/" + str(uid))
-        return response.text, response.status_code
+        try:
+            global driver
+            driver.get("https://rivalsmeta.com/player/" + uid)
+            print("Updating Player " + uid)
+            # firefox
+            # button = driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/section/div[1]/div[1]/div[2]/div')
+            # chrome
+            button = driver.find_element(By.XPATH, '//*[@id="__nuxt"]/div[2]/section/div[1]/div[1]/div[2]/div/button/span')
+            try:
+                #firefox
+                #timerele = driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/section/div[1]/div[1]/div[2]/div/div')
+                #chrome
+                timerele = driver.find_element(By.XPATH, '//*[@id="__nuxt"]/div[2]/section/div[1]/div[1]/div[2]/div/div')
+            except:
+                # sometimes this element is not visible, so we will just click the button and move on.
+                timerele = button
+            # if the button is already clicked, we don't want to click it again. timerele is only visible if the button has been clicked
+            if "Available in" in timerele.text:
+                print(f"button already clicked for {uid}. {timerele.text}")
+                return "button already clicked", 204
+            button.click()
+            uid_update_time[uid] = timenow
+            # write the update time to the relevant files for this uid
+            for guildid in server_uids:
+                if uid in server_uids[guildid]:
+                    with open ("uids" + str(guildid) + ".txt", "w") as file:
+                        for i in range(len(server_uids[guildid])):
+                            if server_uids[guildid][i] == uid:
+                                file.write(f"\n{uid},{str(uid_channels[uid])},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}")
+                            else:
+                                file.write(f"\n{server_uids[guildid][i]},{uid_channels[server_uids[guildid][i]]},{uid_last_known_peak[server_uids[guildid][i]]},{int(uid_update_time[server_uids[guildid][i]].timestamp())}")
+
+                                
+        except Exception as e:
+            print(e)
+            return "button click failed", 500
+        return "button clicked", 200
+        # response2 = requests.get("https://rivalsmeta.com/api/update-player/" + str(uid))
+        # response = requests.get("https://rivalsmeta.com/api/update-player/" + str(uid) + "?SEASON=" + str(currentseason))
+        #print(response2.text)
+        # write the update time to the relevant file for this uid
+        #print(response.text)
+        #return response.text, response.status_code
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
