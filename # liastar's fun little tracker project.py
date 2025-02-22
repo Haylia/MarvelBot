@@ -62,16 +62,9 @@ uid_update_time = {}
 uid_last_known_peak = {}
 author_names = {}
 
-#every time a max_level is found, compare it to the last known peak and update if it is higher both in the dict and the text file
-# then if its higher, post a message in the channel the uid was added in
-# current logic problems: 
-# if the uid is not being tracked in the server it breaks everything
-# solution: check if the uid is tracked in the server before trying to update it
-# extra solution: 
-
-# when a new peak is achieved, it only gets posted in the channel that trigged the update
-# solution: check all the other servers uids to post in there too
-# extra solution: turn the peak message into a function that can be called from anywhere
+#uid channels needs redoing. it needs to be a dictionary of lists, with the uid as the key and the list of channels as the value
+# this is because a user can be tracked in multiple channels in the same server
+# all file writing using this will need to be updated to reflect this change (in peak function)
 
 from discord.ext import commands, tasks
 from discord import guild, embeds, Embed, InteractionResponse
@@ -115,8 +108,13 @@ async def on_ready():
                         continue
                     else:
                         uid, channelid,lastrank,updatetime = uids[i].split(",")
+                        channelid = int(channelid)
                         server_uids[guilds.id].append(uid)
-                        uid_channels[uid] = channelid
+                        # uid_channels[uid] = channelid # this needs to be a dictionary of lists
+                        if uid in uid_channels:
+                            uid_channels[uid].append(channelid)
+                        else:
+                            uid_channels[uid] = [channelid]
                         uid_last_known_peak[uid] = int(lastrank)
                         uid_update_time[uid] = pd.to_datetime(int(updatetime), unit='s')
                         print(f"added uid {uid} to {guilds.name} with last known peak {lastrank} and update time {uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S')}")
@@ -199,7 +197,7 @@ async def on_message(message):
     if message.author == client.user:
         return
     if message.content.startswith(PREFIX):
-        print(f"Command: {message.content}")
+        print(f"Command: {message.content} sent by {message.author.name} in {message.guild.name}")
         await client.process_commands(message)
 
 def getuidforname(username):
@@ -354,6 +352,7 @@ map_dict = {
     1230: "Shin-Shibuya",
     1267: "Hall of Djalia",
     1290: "Symbiotic Surface",
+    1217: "Central Park",
 }
 
 def get_map(mapid):
@@ -364,6 +363,7 @@ hero_dict = {
     1014: "The Punisher",
     1015: "Storm",
     1016: "Loki",
+    1017: "Human Torch",
     1018: "Doctor Strange",
     1020: "Mantis",
     1021: "Hawkeye",
@@ -394,6 +394,7 @@ hero_dict = {
     1048: "Psylocke",
     1049: "Wolverine",
     1050: "Invisible Woman",
+    1051: "The Thing",
     1052: "Iron Fist"
 }
 
@@ -422,15 +423,45 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
             print(f"uid {uid} has reached a new peak rank of {convert_level(max_level)}")
             for guilds in client.guilds:
                 guildid = guilds.id
-                channelid = uid_channels[uid]
-                if uid in server_uids[guildid] and channelid not in returnchannels:
+                channelids = uid_channels[uid]
+                print(f"checking {guilds.name} for {uid} using {server_uids[guildid]}")
+                # if the uid is tracked in the guild, send the message to the channel
+                if str(uid) in server_uids[guildid] :
+                    print(f"found {uid} in {guilds.name}")
+                    for channels in channelids:
+                        # if the channel is in the guild, send the message
+                        channel = client.get_channel(channels)
+                        if channel in guilds.channels:
+                            channelid = channel.id
+                            break
                     peakembed = discord.Embed(title="Congratulations!", color=discord.Color.green())
+                    with open ("uids" + str(guildid) + ".txt", "r") as file:
+                        oldlines = file.readlines()
                     with open ("uids" + str(guildid) + ".txt", "w") as file:
-                        for i in range(len(server_uids[guildid])):
-                            if server_uids[guildid][i] == uid:
-                                file.write(f"\n{uid},{str(channelid)},{max_level},{int(datetime.now().timestamp())}")
+                        for line in oldlines:
+                            uid, channelid,lastrank,updatetime = line.split(",")
+                            if uid == str(uid):
+                                file.write(f"\n{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}")
                             else:
-                                file.write(f"\n{server_uids[guildid][i]},{uid_channels[server_uids[guildid][i]]},{uid_last_known_peak[server_uids[guildid][i]]},{int(uid_update_time[server_uids[guildid][i]].timestamp())}")
+                                file.write(line)
+                        # for i in range(len(server_uids[guildid])):
+                        #     if server_uids[guildid][i] == uid:
+                        #         file.write(f"\n{uid},{str(channelid)},{max_level},{int(datetime.now().timestamp())}")
+                        #     else:
+                        #         # find the channelid for this uid for this guild
+                        #         # since uid_channels is a dictionary of lists, we need to loop through the list to find the channelid
+                        #         channelfound = False
+                        #         for j in range(len(uid_channels[uid])):
+                        #             if uid_channels[uid][j] == channelid:
+                        #                 file.write(f"\n{server_uids[guildid][i]},{uid_channels[uid][j]},{uid_last_known_peak[uid]},{int(uid_update_time[uid].timestamp())}")
+                        #                 channelfound = True
+                        #                 break
+                        #         if not channelfound:
+                        #             for channel in guilds.channels:
+                        #                 if channel.id in uid_channels[uid]:
+                        #                     file.write(f"\n{server_uids[guildid][i]},{channel.id},{uid_last_known_peak[uid]},{int(uid_update_time[uid].timestamp())}")
+                        #                     break
+
                     peaked = True
                     peakembed.add_field(name=f"{playername} has reached a new peak rank of {convert_level(max_level)}", value=f"New score: {max_rank_score}")
                     embeds_to_send.append(peakembed)
@@ -455,11 +486,13 @@ async def matches(ctx, username="", amount=5):
         authorid = ctx.author.id
         if authorid in author_names:
             username = author_names[authorid]
+            playername = getnameforuid(username)
             authorused = True
         else:
             await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
             return
-    playername = username
+    else:
+        playername = username
     if not authorused:
         username = getuidforname(username)
     for key, value in name_uid_cache.items():
@@ -641,6 +674,7 @@ async def update(ctx, username=""):
         authorid = ctx.author.id
         if authorid in author_names:
             uid = author_names[authorid]
+            username = getnameforuid(uid)
         else:
             await ctx.send("You have not set a username to track. Use the " + PREFIX + "set command to set your username, or provide a username")
             return
@@ -763,7 +797,10 @@ async def add(ctx, username):
         await ctx.send("Failed to find uid for this player")
         return
     server_uids[guildid].append(uid)
-    uid_channels[uid] = ctx.channel.id
+    if uid in uid_channels:
+        uid_channels[uid].append(ctx.channel.id)
+    else:
+        uid_channels[uid] = [ctx.channel.id]
     # get stats for the user and add them to the file (for their max rank)
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
     if playername == "error" and teamname == "error" and level == "error":
@@ -787,7 +824,10 @@ async def adduid(ctx, uid):
         await ctx.send(f"Failed to find uid {uid}")
         return
     server_uids[guildid].append(uid)
-    uid_channels[uid] = ctx.channel.id
+    if uid in uid_channels:
+        uid_channels[uid].append(ctx.channel.id)
+    else:
+        uid_channels[uid] = [ctx.channel.id]
     playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
     if playername == "error" and teamname == "error" and level == "error":
         await ctx.send("Failed to get stats for this player")
@@ -809,7 +849,10 @@ async def addlist(ctx, *usernames):
             continue
         else:
             server_uids[guildid].append(uid)
-            uid_channels[uid] = ctx.channel.id
+            if uid in uid_channels:
+                uid_channels[uid].append(ctx.channel.id)
+            else:
+                uid_channels[uid] = [ctx.channel.id]
             playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
             if playername == "error" and teamname == "error" and level == "error":
                 await ctx.send("Failed to get stats for this player")
@@ -840,7 +883,11 @@ async def removeuid(ctx, uid):
     """Removes a user from the leaderboard based on their uid"""
     guildid = ctx.guild.id
     server_uids[guildid].remove(uid)
-    uid_channels.pop(uid)
+    users_channels = uid_channels[uid]
+    for i in range(len(users_channels)):
+        if users_channels[i] == ctx.channel.id:
+            users_channels.pop(i)
+            break
     with open ("uids" + str(guildid) + ".txt", "w") as file:
         for i in range(len(server_uids[guildid])):
             file.write(f"\n{uid},{str(ctx.channel.id)},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}")
@@ -917,6 +964,15 @@ async def setseason(ctx, season):
         file.write(season)
     await ctx.send(f"Season set to {season}")
 
+def get_ingame_season():
+    global currentseason
+    if int(currentseason) == 1:
+        return 0
+    elif int(currentseason) == 2:
+        return 1
+    elif int(currentseason) == 3:
+        return 1.5
+    
 
 def get_current_season():
     global currentseason
@@ -925,7 +981,7 @@ def get_current_season():
 @client.command(name="getseason")
 async def getseason(ctx):
     """Returns the current season as shown in game"""
-    await ctx.send(f"Current season is {get_current_season()}")
+    await ctx.send(f"Current season is {get_ingame_season()} (Bot: {get_current_season()})")
 
 @client.command(name="reportbug")
 async def reportbug(ctx, *bug):
@@ -942,7 +998,7 @@ async def bugreport(ctx, *bug):
     bug = " ".join(bug)
     author = ctx.author
     liadisc = client.get_user(278288658673434624)
-    await liadisc.send(f"Bug report from {author}: {bug}")
+    await liadisc.send(f"Bug report from {author} ({author.id}): {bug}")
     await ctx.send("Bug report sent")
 
 @client.command(name="suggest")
@@ -951,7 +1007,7 @@ async def suggest(ctx, *suggestion):
     suggestion = " ".join(suggestion)
     author = ctx.author
     liadisc = client.get_user(278288658673434624)
-    await liadisc.send(f"Suggestion from {author}: {suggestion}")
+    await liadisc.send(f"Suggestion from {author} ({author.id}): {suggestion}")
     await ctx.send("Suggestion sent")
 
 @client.command(name="announce")
@@ -963,7 +1019,12 @@ async def announce(ctx, *announcement):
         return
     announcement = " ".join(announcement)
     # Get all the unique channels in uid_channels
-    uniquechannels = list(set(uid_channels.values()))
+    # uid_channels is a dictionary with the uid as the key and the channelids as a list as the value
+    uniquechannels = []
+    for key, value in uid_channels.items():
+        for i in range(len(value)):
+            if value[i] not in uniquechannels:
+                uniquechannels.append(value[i])
 
     # for each guild, check if the channel is in the uniquechannels list
     # if it is, send the announcement to that channel
@@ -1015,13 +1076,50 @@ async def set(ctx, username):
 
 @client.command(name="me")
 async def me(ctx):
-    """Gets the default username for this user"""
+    """Gets the default username for this user, plus memes?"""
+    message = ""
+    if ctx.author.id == 122466532960763906:
+        message += "Real SlugGal!\n"
+    elif ctx.author.id == 278288658673434624:
+        message += "Liasto statline\n"
+    elif ctx.author.id == 220951788277202944:
+        message += "Hi Dalish!!!!\n"
+    elif ctx.author.id == 106131363018575872:
+        message += "the moom hauah youoy\n"
+    elif ctx.author.id == 355523578432585728:
+        message += "meow :3\n"
+    elif ctx.author.id == 235599271770980353:
+        message += "Hi Spy!!!!\n"
     author_names = get_author_names()
     author = ctx.author
     if author.id in author_names:
-        await ctx.send(getnameforuid(author_names[author.id]))
+        message += "Your set username is: " + getnameforuid(author_names[author.id])
+        await ctx.send(message)
     else:
-        await ctx.send("You have not set a default username")
+        message += "You have not set a default username"
+        await ctx.send(message)
+
+@client.command(name="senddm")
+async def senddm(ctx, user, *message):
+    """[ADMIN] Sends a DM to a user"""
+    # only lia can do this
+    if ctx.author.id != 278288658673434624:
+        await ctx.send("You do not have permission to run this command")
+        return
+    message = " ".join(message)
+    user = client.get_user(int(user))
+    await user.send(message)
+    await ctx.send("DM sent")
+
+@client.command(name="debuggetmaxlevel")
+async def debuggetmaxlevel(ctx, username):
+    """Gets the max level for a user based on their username"""
+    uid = getuidforname(username)
+    if uid == "uid finding failed":
+        await ctx.send("Failed to find uid for this player")
+    else:
+        if uid in uid_last_known_peak:
+            await ctx.send(f"Max level for {username} is {uid_last_known_peak[uid]} ({convert_level(uid_last_known_peak[uid])})")
         
 
 
@@ -1062,6 +1160,21 @@ def buttonclicker(uid):
                 return "update already done in last 30 minutes", 204
         try:
             global driver
+            # catch empty session (invalid id) caused by tab crashing:
+            crashed = True
+            while crashed:
+                try:
+                    driver.get("https://rivalsmeta.com/player/" + uid)
+                    crashed = False
+                except:
+                    print("crashed, attempting to restart driver")
+                    global service
+                    service = Service(executable_path="./webdriver/chromedriver")
+                    # service = Service()
+                    global options
+                    driver.quit()
+                    driver = webdriver.Chrome(service=service, options=options)
+                    driver.maximize_window()
             driver.get("https://rivalsmeta.com/player/" + uid)
             print("Updating Player " + uid)
             # firefox
@@ -1085,12 +1198,18 @@ def buttonclicker(uid):
             # write the update time to the relevant files for this uid
             for guildid in server_uids:
                 if uid in server_uids[guildid]:
+                    with open ("uids" + str(guildid) + ".txt", "r") as file:
+                        oldlines = file.readlines()
                     with open ("uids" + str(guildid) + ".txt", "w") as file:
-                        for i in range(len(server_uids[guildid])):
-                            if server_uids[guildid][i] == uid:
-                                file.write(f"\n{uid},{str(uid_channels[uid])},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}")
+                        for line in oldlines:
+                            if uid in line:
+                                # find the channel id for this uid in this guild
+                                line = line.strip()
+                                line = line.split(",")
+                                channelid = line[1]
+                                file.write(f"{uid},{str(channelid)},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}\n")
                             else:
-                                file.write(f"\n{server_uids[guildid][i]},{uid_channels[server_uids[guildid][i]]},{uid_last_known_peak[server_uids[guildid][i]]},{int(uid_update_time[server_uids[guildid][i]].timestamp())}")
+                                file.write(line)
 
                                 
         except Exception as e:
