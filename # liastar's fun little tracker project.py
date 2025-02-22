@@ -115,7 +115,11 @@ async def on_ready():
                             uid_channels[uid].append(channelid)
                         else:
                             uid_channels[uid] = [channelid]
-                        uid_last_known_peak[uid] = int(lastrank)
+                        if uid in uid_last_known_peak:
+                            if int(lastrank) > uid_last_known_peak[uid]:
+                                uid_last_known_peak[uid] = int(lastrank)
+                        else:
+                            uid_last_known_peak[uid] = int(lastrank)
                         uid_update_time[uid] = pd.to_datetime(int(updatetime), unit='s')
                         print(f"added uid {uid} to {guilds.name} with last known peak {lastrank} and update time {uid_update_time[uid].strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -424,10 +428,9 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
             for guilds in client.guilds:
                 guildid = guilds.id
                 channelids = uid_channels[uid]
-                print(f"checking {guilds.name} for {uid} using {server_uids[guildid]}")
                 # if the uid is tracked in the guild, send the message to the channel
                 if str(uid) in server_uids[guildid] :
-                    print(f"found {uid} in {guilds.name}")
+                    print(f"sending peak message for {uid} in {guilds.name}")
                     for channels in channelids:
                         # if the channel is in the guild, send the message
                         channel = client.get_channel(channels)
@@ -439,11 +442,14 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
                         oldlines = file.readlines()
                     with open ("uids" + str(guildid) + ".txt", "w") as file:
                         for line in oldlines:
-                            uid, channelid,lastrank,updatetime = line.split(",")
-                            if uid == str(uid):
-                                file.write(f"\n{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}")
-                            else:
+                            if line == "\n" or line == " " or line == "":
                                 file.write(line)
+                            else:
+                                fileuid, channelid,lastrank,updatetime = line.split(",")
+                                if fileuid == str(uid):
+                                    file.write(f"\n{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}")
+                                else:
+                                    file.write(line)
                         # for i in range(len(server_uids[guildid])):
                         #     if server_uids[guildid][i] == uid:
                         #         file.write(f"\n{uid},{str(channelid)},{max_level},{int(datetime.now().timestamp())}")
