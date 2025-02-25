@@ -447,7 +447,7 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
                             else:
                                 fileuid, channelid,lastrank,updatetime = line.split(",")
                                 if fileuid == str(uid):
-                                    file.write(f"\n{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}")
+                                    file.write(f"{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}\n")
                                 else:
                                     file.write(line)
                         # for i in range(len(server_uids[guildid])):
