@@ -447,7 +447,7 @@ def peak_embed_creator(uid, playername, max_level, max_rank_score):
                             else:
                                 fileuid, channelid,lastrank,updatetime = line.split(",")
                                 if fileuid == str(uid):
-                                    file.write(f"{uid},{channelid},{max_level},{uid_update_time[uid].timestamp()}\n")
+                                    file.write(f"{uid},{channelid},{max_level},{int(uid_update_time[uid].timestamp())}\n")
                                 else:
                                     file.write(line)
                         # for i in range(len(server_uids[guildid])):
@@ -568,7 +568,11 @@ async def matches(ctx, username="", amount=5):
             rankstring = ""
             if gamemode == "Ranked":
                 rankstring = f"\nRank: {convert_level(oldlevel)} -> {convert_level(newlevel)}\nRS: {round(float(newscore), 2)} ({scorestr}{round(float(scoreadded), 2)})"
-            embed.add_field(name=f"{mapname} - {gamemode} (<t:{matchtimestamp}:R>)" + leftstring, value=f"{winstring} as {playerheroname}{vpstring}\n KDA {kills}/{deaths}/{assists} ({round(int(kills + assists)/int(deaths),2)}){rankstring}\nScore: {scoreteam0} - {scoreteam1} in {matchtimemins}m {matchtimesecs}s", inline=False)
+            if deaths == 0:
+                kda = "Perfect"
+            else:
+                kda = round(int(kills + assists)/int(deaths),2)
+            embed.add_field(name=f"{mapname} - {gamemode} (<t:{matchtimestamp}:R>)" + leftstring, value=f"{winstring} as {playerheroname}{vpstring}\n KDA {kills}/{deaths}/{assists} ({kda}){rankstring}\nScore: {scoreteam0} - {scoreteam1} in {matchtimemins}m {matchtimesecs}s", inline=False)
     embed.set_footer(text="Last updated: " + uid_update_time[username].strftime('%Y-%m-%d %H:%M:%S'))
     await ctx.send(embed=embed)
 
@@ -1170,6 +1174,7 @@ def buttonclicker(uid):
             crashed = True
             while crashed:
                 try:
+                    print("getting player page for " + uid)
                     driver.get("https://rivalsmeta.com/player/" + uid)
                     crashed = False
                 except:
@@ -1181,7 +1186,6 @@ def buttonclicker(uid):
                     driver.quit()
                     driver = webdriver.Chrome(service=service, options=options)
                     driver.maximize_window()
-            driver.get("https://rivalsmeta.com/player/" + uid)
             print("Updating Player " + uid)
             # firefox
             # button = driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/section/div[1]/div[1]/div[2]/div')
@@ -1200,6 +1204,7 @@ def buttonclicker(uid):
                 print(f"button already clicked for {uid}. {timerele.text}")
                 return "button already clicked", 204
             button.click()
+            print("Button clicked on Player " + uid)
             uid_update_time[uid] = timenow
             # write the update time to the relevant files for this uid
             for guildid in server_uids:
@@ -1216,6 +1221,7 @@ def buttonclicker(uid):
                                 file.write(f"{uid},{str(channelid)},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}\n")
                             else:
                                 file.write(line)
+            print("update time written to file")
 
                                 
         except Exception as e:
