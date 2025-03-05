@@ -246,7 +246,6 @@ def get_stats(username, season=-1):
         season = get_current_season()
     username = getuidforname(username)
     print(f"getting stats for {username} in season {season}")
-    text, code = buttonclicker(username)
     response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     if response.status_code != 200:
         return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
@@ -274,7 +273,6 @@ def get_stats(username, season=-1):
         max_level = rankgame["rank_game"]["max_level"]
     except Exception as e:
         # this player has no ranked data for this season
-        print(e)
         print(f"no ranked data for {playername} in season {season}")
         rank_score = 0
         ranklevel = 0
@@ -288,7 +286,6 @@ def get_stats(username, season=-1):
 def get_stats_uid(username, season=-1):
     if season == -1:
         season = get_current_season()
-    text, code = buttonclicker(username)
     response = requests.get("https://rivalsmeta.com/api/player/" + username + "?SEASON=" + str(season))
     if response.status_code != 200:
         return "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error", "error"
@@ -315,7 +312,6 @@ def get_stats_uid(username, season=-1):
         max_level = rankgame["rank_game"]["max_level"]
     except Exception as e:
         # this player has no ranked data for this season
-        print(e)
         rank_score = 0
         ranklevel = 0
         max_rank_score = 0
@@ -784,12 +780,16 @@ async def leaderboard(ctx):
             print(f"failed to get stats for {uids[i]}")
     leaderboard.sort(key=lambda x: int(x[2]), reverse=True)
     for i in range(len(leaderboard)):
+        if leaderboard[i][6] + leaderboard[i][7] == 0:
+            winrate = "N/A"
+        else:
+            winrate = round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)
         if leaderboard[i][3] == 0:
             embed.add_field(name=leaderboard[i][0], value="Unranked", inline=False)
         elif leaderboard[i][1] == "":
-            embed.add_field(name=leaderboard[i][0], value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
+            embed.add_field(name=leaderboard[i][0], value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {winrate}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
         else:
-            embed.add_field(name=leaderboard[i][0] + " [" + leaderboard[i][1] + "]", value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {round(leaderboard[i][6]/(leaderboard[i][6] + leaderboard[i][7]) * 100, 2)}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
+            embed.add_field(name=leaderboard[i][0] + " [" + leaderboard[i][1] + "]", value=f"Rank: {convert_level(leaderboard[i][3])} ({leaderboard[i][2]})\nPeak Rank: {convert_level(leaderboard[i][5])} ({leaderboard[i][4]})\nWin/Loss: {winrate}% ({leaderboard[i][6]}W {leaderboard[i][7]}L)", inline=False)
     await ctx.send(embed=embed)
     if peaked:
         for i in range(len(peakchannels)):
@@ -798,29 +798,6 @@ async def leaderboard(ctx):
     
 
 
-@client.command(name="add")
-async def add(ctx, username):
-    """Adds a user to the leaderboard based on their username"""
-    guildid = ctx.guild.id
-    uid = getuidforname(username)
-    if uid == "uid finding failed":
-        await ctx.send("Failed to find uid for this player")
-        return
-    server_uids[guildid].append(uid)
-    if uid in uid_channels:
-        uid_channels[uid].append(ctx.channel.id)
-    else:
-        uid_channels[uid] = [ctx.channel.id]
-    # get stats for the user and add them to the file (for their max rank)
-    playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
-    if playername == "error" and teamname == "error" and level == "error":
-        await ctx.send("Failed to get stats for this player")
-        return
-    uid_last_known_peak[uid] = max_level
-    uid_update_time[uid] = datetime.now()
-    with open ("uids" + str(guildid) + ".txt", "a") as file:
-        file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-    await ctx.send(f"uid {uid} ({playername}) added to the list")
     
 
 @client.command(name="adduid")
@@ -833,6 +810,9 @@ async def adduid(ctx, uid):
     if code != 200 and code != 204:
         await ctx.send(f"Failed to find uid {uid}")
         return
+    if uid in server_uids[guildid]:
+        await ctx.send(f"{uid} is already being tracked")
+        return
     server_uids[guildid].append(uid)
     if uid in uid_channels:
         uid_channels[uid].append(ctx.channel.id)
@@ -848,8 +828,8 @@ async def adduid(ctx, uid):
         file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
     await ctx.send(f"uid {uid} ({playername}) added to the list")
 
-@client.command(name="addlist")
-async def addlist(ctx, *usernames):
+@client.command(name="add")
+async def add(ctx, *usernames):
     """Add a list of usernames to the leaderboard"""
     guildid = ctx.guild.id
     for username in usernames:
@@ -858,20 +838,23 @@ async def addlist(ctx, *usernames):
             await ctx.send(f"Failed to find uid for {username}")
             continue
         else:
-            server_uids[guildid].append(uid)
-            if uid in uid_channels:
-                uid_channels[uid].append(ctx.channel.id)
+            if uid in server_uids[guildid]:
+                await ctx.send(f"{username} is already being tracked")
             else:
-                uid_channels[uid] = [ctx.channel.id]
-            playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
-            if playername == "error" and teamname == "error" and level == "error":
-                await ctx.send("Failed to get stats for this player")
-                return
-            uid_last_known_peak[uid] = max_level
-            uid_update_time[uid] = datetime.now()
-            with open ("uids" + str(guildid) + ".txt", "a") as file:
-                file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
-            await ctx.send(f"uid {uid} ({playername}) added to the list")
+                server_uids[guildid].append(uid)
+                if uid in uid_channels:
+                    uid_channels[uid].append(ctx.channel.id)
+                else:
+                    uid_channels[uid] = [ctx.channel.id]
+                playername, teamname, level, rank_score, ranklevel, max_rank_score, max_level, rankedwins, rankedlosses, timeplayedhours, timeplayedminutes, uid = get_stats_uid(uid)
+                if playername == "error" and teamname == "error" and level == "error":
+                    await ctx.send("Failed to get stats for this player")
+                    return
+                uid_last_known_peak[uid] = max_level
+                uid_update_time[uid] = datetime.now()
+                with open ("uids" + str(guildid) + ".txt", "a") as file:
+                    file.write(f"\n{uid},{str(ctx.channel.id)},{max_level},{int(datetime.now().timestamp())}")
+                await ctx.send(f"uid {uid} ({playername}) added to the list")
 
 @client.command(name="remove")
 async def remove(ctx, username):
@@ -881,11 +864,14 @@ async def remove(ctx, username):
     if uid == "uid finding failed":
         await ctx.send("Failed to find uid for this player")
         return
+    if uid not in server_uids[guildid]:
+        await ctx.send(f"{username} is not being tracked")
+        return
     server_uids[guildid].remove(uid)
     uid_channels.pop(uid)
     with open ("uids" + str(guildid) + ".txt", "w") as file:
         for i in range(len(server_uids[guildid])):
-            file.write(f"\n{uid},{str(ctx.channel.id)},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}")
+            file.write(f"\n{server_uids[guildid][i]},{str(ctx.channel.id)},{uid_last_known_peak[server_uids[guildid][i]]},{int(datetime.now().timestamp())}")
     await ctx.send(f"uid {uid} ({username}) removed from the list")
 
 @client.command(name="removeuid")
@@ -894,13 +880,16 @@ async def removeuid(ctx, uid):
     guildid = ctx.guild.id
     server_uids[guildid].remove(uid)
     users_channels = uid_channels[uid]
+    if uid not in server_uids[guildid]:
+        await ctx.send(f"{uid} is not being tracked")
+        return
     for i in range(len(users_channels)):
         if users_channels[i] == ctx.channel.id:
             users_channels.pop(i)
             break
     with open ("uids" + str(guildid) + ".txt", "w") as file:
         for i in range(len(server_uids[guildid])):
-            file.write(f"\n{uid},{str(ctx.channel.id)},{uid_last_known_peak[uid]},{int(datetime.now().timestamp())}")
+            file.write(f"\n{server_uids[guildid][i]},{str(ctx.channel.id)},{uid_last_known_peak[server_uids[guildid][i]]},{int(datetime.now().timestamp())}")
     await ctx.send(f"uid {uid} removed from the list")
 
 @client.command(name="clearalluids")
@@ -1130,7 +1119,27 @@ async def debuggetmaxlevel(ctx, username):
     else:
         if uid in uid_last_known_peak:
             await ctx.send(f"Max level for {username} is {uid_last_known_peak[uid]} ({convert_level(uid_last_known_peak[uid])})")
+
+
+@client.command(name="cachedelete")
+async def cachedelete(ctx, username):
+    """[ADMIN] Deletes a name from the cache"""
+    # only lia can do this
+    if ctx.author.id != 278288658673434624:
+        await ctx.send("You do not have permission to run this command")
+        return
+    for key, value in name_uid_cache.items():
+        if value.lower() == username.lower():
+            name_uid_cache.pop(key)
+            await ctx.send(f"{username} removed from the cache")
+            # write the cache to the file
+            with open("nameuidcache.txt", "w") as file:
+                for key, value in name_uid_cache.items():
+                    file.write(f"{key},{value}\n")
+            return
+    await ctx.send(f"{username} not found in the cache")
         
+
 
 
 @tasks.loop(seconds=3600)
